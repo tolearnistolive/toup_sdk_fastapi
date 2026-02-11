@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ToupCamera Web Viewer</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="app">
+        <!-- Video Area -->
+        <div class="video-area">
+            <div class="video-header">
+                <span class="title">🔬 ToupCamera</span>
+                <div class="status-badge" id="status-badge">
+                    <span class="status-dot"></span>
+                    <span id="status-text">Disconnected</span>
+                </div>
+            </div>
+            <div class="video-container">
+                <img id="video-stream" src="/stream" alt="Camera Stream">
+            </div>
+            <div class="video-footer">
+                <span id="fps-counter">-- FPS</span>
+                <span id="resolution-display">--</span>
+            </div>
+        </div>
+
+        <!-- Sidebar Controls -->
+        <aside class="sidebar">
+            <div class="sidebar-section">
+                <div class="section-title">Camera</div>
+                <div class="btn-group">
+                    <button id="btn-connect" class="btn btn-primary">Connect</button>
+                    <button id="btn-disconnect" class="btn btn-secondary">Disconnect</button>
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-title">Stream Resolution</div>
+                <p class="hint">Lower = faster streaming</p>
+                <select id="resolution-select" class="select-full">
+                    <option value="">--</option>
+                </select>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-title">Exposure</div>
+                <label class="checkbox-row">
+                    <input type="checkbox" id="auto-exposure" checked>
+                    <span>Auto Exposure</span>
+                </label>
+                <div class="slider-row">
+                    <span>Time</span>
+                    <input type="range" id="exposure-slider" min="0" max="1000000" value="0">
+                    <span id="exposure-value">0</span>μs
+                </div>
+                <div class="slider-row">
+                    <span>Gain</span>
+                    <input type="range" id="gain-slider" min="0" max="500" value="100">
+                    <span id="gain-value">100</span>%
+                </div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="section-title">White Balance</div>
+                <div class="slider-row">
+                    <span>Temp</span>
+                    <input type="range" id="temp-slider" min="2000" max="15000" value="6503">
+                    <span id="temp-value">6503</span>
+                </div>
+                <div class="slider-row">
+                    <span>Tint</span>
+                    <input type="range" id="tint-slider" min="200" max="2500" value="1000">
+                    <span id="tint-value">1000</span>
+                </div>
+                <button id="btn-auto-wb" class="btn btn-secondary btn-full">Auto WB</button>
+            </div>
+
+            <div class="sidebar-section capture-section">
+                <div class="section-title">📸 High-Res Capture</div>
+                <p class="hint">Select capture resolution</p>
+                <select id="capture-resolution-select" class="select-full">
+                    <option value="">--</option>
+                </select>
+                <button id="btn-capture" class="btn btn-capture btn-full">Capture Image</button>
+                <div id="capture-status" class="capture-status"></div>
+            </div>
+        </aside>
+    </div>
+
+    <div id="notification" class="notification hidden"></div>
+
+    <script>
+        const $ = id => document.getElementById(id);
+
+        const videoStream = $('video-stream');
+        const statusBadge = $('status-badge');
+        const statusText = $('status-text');
+        const fpsCounter = $('fps-counter');
+        const resolutionDisplay = $('resolution-display');
+        const resolutionSelect = $('resolution-select');
+        const captureResolutionSelect = $('capture-resolution-select');
+        const autoExposure = $('auto-exposure');
+        const exposureSlider = $('exposure-slider');
+        const exposureValue = $('exposure-value');
+        const gainSlider = $('gain-slider');
+        const gainValue = $('gain-value');
+        const tempSlider = $('temp-slider');
+        const tempValue = $('temp-value');
+        const tintSlider = $('tint-slider');
+        const tintValue = $('tint-value');
+        const captureStatus = $('capture-status');
+        const notification = $('notification');
+
+        let resolutionsLoaded = false;
+
+        function notify(msg, type = 'info') {
+            notification.textContent = msg;
+            notification.className = `notification ${type}`;
+            notification.classList.remove('hidden');
+            setTimeout(() => notification.classList.add('hidden'), 2500);
+        }
+
+        async function api(endpoint, method = 'GET', body = null) {
+            const opts = { method, headers: { 'Content-Type': 'application/json' } };
+            if (body) opts.body = JSON.stringify(body);
+            return (await fetch(endpoint, opts)).json();
+        }
+
+        async function updateStatus() {
+            try {
+                const d = await api('/camera/status');
+                statusBadge.classList.toggle('connected', d.connected);
+                statusText.textContent = d.connected ? 'Connected' : 'Disconnected';
+
+                if (d.connected) {
+                    fpsCounter.textContent = `${d.fps} FPS`;
+                    resolutionDisplay.textContent = `${d.resolution.width}×${d.resolution.height}`;
+
+                    if (d.exposure) {
+                        exposureSlider.min = d.exposure.min;
+                        exposureSlider.max = d.exposure.max;
+                        exposureSlider.value = d.exposure.current;
+                        exposureValue.textContent = d.exposure.current;
+                    }
+                    if (d.gain) {
+                        gainSlider.min = d.gain.min;
+                        gainSlider.max = d.gain.max;
+                        gainSlider.value = d.gain.current;
+                        gainValue.textContent = d.gain.current;
+                    }
+
+                    autoExposure.checked = d.auto_exposure;
+                    exposureSlider.disabled = d.auto_exposure;
+                    gainSlider.disabled = d.auto_exposure;
+
+                    if (d.white_balance) {
+                        tempSlider.value = d.white_balance.temp;
+                        tempValue.textContent = d.white_balance.temp;
+                        tintSlider.value = d.white_balance.tint;
+                        tintValue.textContent = d.white_balance.tint;
+                    }
+
+                    if (!resolutionsLoaded && d.resolutions) {
+                        resolutionSelect.innerHTML = d.resolutions.map(r =>
+                            `<option value="${r.index}" ${r.current ? 'selected' : ''}>${r.width}×${r.height}</option>`
+                        ).join('');
+                        if (d.still_resolutions) {
+                            captureResolutionSelect.innerHTML = d.still_resolutions.map(r =>
+                                `<option value="${r.index}" ${r.current ? 'selected' : ''}>${r.width}×${r.height}</option>`
+                            ).join('');
+                        }
+                        resolutionsLoaded = true;
+                    }
+                }
+            } catch (e) {
+                statusBadge.classList.remove('connected');
+                statusText.textContent = 'Error';
+            }
+        }
+
+        $('btn-connect').onclick = async () => {
+            await api('/camera/open', 'POST');
+            notify('Connected!', 'success');
+            resolutionsLoaded = false;
+            videoStream.src = '/stream?' + Date.now();
+            updateStatus();
+        };
+
+        $('btn-disconnect').onclick = async () => {
+            await api('/camera/close', 'POST');
+            notify('Disconnected', 'info');
+            resolutionsLoaded = false;
+            updateStatus();
+        };
+
+        $('btn-capture').onclick = async () => {
+            captureStatus.textContent = 'Capturing...';
+            const res = await api('/capture', 'POST', { resolution_index: +captureResolutionSelect.value || 0 });
+            captureStatus.textContent = res.success ? `✅ ${res.filename}` : `❌ ${res.message}`;
+            if (res.success) notify(`Saved: ${res.filename}`, 'success');
+        };
+
+        $('btn-auto-wb').onclick = async () => {
+            await api('/settings/auto_white_balance', 'POST');
+            notify('Auto WB applied', 'success');
+            updateStatus();
+        };
+
+        resolutionSelect.onchange = async e => {
+            await api('/settings/resolution', 'PUT', { index: +e.target.value });
+            videoStream.src = '/stream?' + Date.now();
+        };
+
+        captureResolutionSelect.onchange = async e => {
+            await api('/settings/capture_resolution', 'PUT', { index: +e.target.value });
+        };
+
+        autoExposure.onchange = async e => {
+            await api('/settings/auto_exposure', 'PUT', { enabled: e.target.checked });
+            exposureSlider.disabled = gainSlider.disabled = e.target.checked;
+        };
+
+        let timers = {};
+        const debounce = (id, fn) => { clearTimeout(timers[id]); timers[id] = setTimeout(fn, 100); };
+
+        exposureSlider.oninput = e => {
+            exposureValue.textContent = e.target.value;
+            debounce('exp', () => api('/settings/exposure', 'PUT', { time_us: +e.target.value }));
+        };
+
+        gainSlider.oninput = e => {
+            gainValue.textContent = e.target.value;
+            debounce('gain', () => api('/settings/gain', 'PUT', { percent: +e.target.value }));
+        };
+
+        tempSlider.oninput = e => {
+            tempValue.textContent = e.target.value;
+            debounce('temp', () => api('/settings/white_balance', 'PUT', { temp: +e.target.value }));
+        };
+
+        tintSlider.oninput = e => {
+            tintValue.textContent = e.target.value;
+            debounce('tint', () => api('/settings/white_balance', 'PUT', { tint: +e.target.value }));
+        };
+
+        updateStatus();
+        setInterval(updateStatus, 1500);
+    </script>
+</body>
+
+</html>
